@@ -78,10 +78,15 @@ fn main() {
         params: DynamicParamSet {
             set: vec![
                 DynamicParam::Component { id: test_vector_id },
-                DynamicParam::Component { id: test_grid_id },
+                DynamicParam::OptionalComponent { id: test_grid_id },
             ],
         },
     };
+
+    println!(
+        "Test vector id: {:?}, test grid id: {:?}",
+        test_vector_id, test_grid_id
+    );
 
     let mut second_query_state = world.query_dynamic(&second_query);
     for items in second_query_state.iter_mut(&mut world) {
@@ -96,6 +101,14 @@ fn main() {
                         "{:?}, {:?}",
                         *vector_pointer.cast::<TestComponent>().as_ptr(),
                         *grid_pointer.cast::<GridSpace>().as_ptr()
+                    );
+                }
+                [DynamicItem::Component {
+                    pointer: vector_pointer,
+                }, DynamicItem::NoMatch] => {
+                    println!(
+                        "{:?}, NoMatch",
+                        *vector_pointer.cast::<TestComponent>().as_ptr()
                     );
                 }
                 _ => unreachable!(),
