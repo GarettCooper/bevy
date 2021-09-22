@@ -1,6 +1,9 @@
 use bevy_ecs::component::{ComponentDescriptor, StorageType};
 use bevy_ecs::prelude::World;
-use bevy_ecs::query::dynamic::{DynamicItem, DynamicParam, DynamicParamSet, DynamicQuery};
+use bevy_ecs::query::dynamic::{
+    DynamicFilter, DynamicFilterQuery, DynamicFilterSet, DynamicItem, DynamicParam,
+    DynamicParamSet, DynamicQuery,
+};
 
 #[derive(PartialEq, Debug)]
 struct TestComponent {
@@ -78,8 +81,16 @@ fn main() {
         params: DynamicParamSet {
             set: vec![
                 DynamicParam::Component { id: test_vector_id },
-                DynamicParam::OptionalComponent { id: test_grid_id },
+                //                DynamicParam::OptionalComponent { id: test_grid_id },
             ],
+        },
+    };
+
+    let filter_query = DynamicFilterQuery {
+        params: DynamicFilterSet {
+            set: vec![DynamicFilter::Without {
+                component_id: test_grid_id,
+            }],
         },
     };
 
@@ -88,7 +99,7 @@ fn main() {
         test_vector_id, test_grid_id
     );
 
-    let mut second_query_state = world.query_dynamic(&second_query);
+    let mut second_query_state = world.query_dynamic_filtered(&second_query, &filter_query);
     for items in second_query_state.iter_mut(&mut world) {
         unsafe {
             match items.items.as_slice() {
@@ -110,6 +121,11 @@ fn main() {
                         "{:?}, NoMatch",
                         *vector_pointer.cast::<TestComponent>().as_ptr()
                     );
+                }
+                [DynamicItem::Component {
+                    pointer: vector_pointer,
+                }, ..] => {
+                    println!("{:?}", *vector_pointer.cast::<TestComponent>().as_ptr());
                 }
                 _ => unreachable!(),
             }

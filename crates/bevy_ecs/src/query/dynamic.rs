@@ -7,6 +7,7 @@ use crate::storage::{ComponentSparseSet, Table, Tables};
 use crate::world::World;
 use std::alloc::Layout;
 use std::cell::UnsafeCell;
+use std::iter::Filter;
 use std::ptr;
 use std::ptr::NonNull;
 
@@ -18,8 +19,33 @@ pub enum DynamicParam {
 }
 
 #[derive(Debug, Clone)]
+pub enum DynamicFilter {
+    With { component_id: ComponentId },
+    Without { component_id: ComponentId },
+}
+
+#[derive(Debug, Clone)]
 pub struct DynamicParamSet {
     pub set: Vec<DynamicParam>,
+}
+
+impl DynamicParamSet {
+    pub fn get_layout(&self, world: &World) -> (Layout, Vec<usize>) {
+        let mut iter = self.set.iter();
+        let mut offsets = vec![0];
+        let mut full_layout = iter.next().unwrap().get_layout(world);
+        for param in iter {
+            let (layout, offset) = full_layout.extend(param.get_layout(world)).unwrap();
+            full_layout = layout;
+            offsets.push(offset)
+        }
+        (full_layout, offsets)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DynamicFilterSet {
+    pub set: Vec<DynamicFilter>,
 }
 
 pub struct DynamicQuery {
@@ -33,11 +59,15 @@ impl DynamicQuery {
 }
 
 pub struct DynamicFilterQuery {
-    param: DynamicParam,
+    pub params: DynamicFilterSet,
 }
 
 pub struct DynamicSetFetch {
     params_fetch: Vec<DynamicFetch>,
+}
+
+pub struct DynamicSetFilterFetch {
+    params_fetch: Vec<DynamicFilterFetch>,
 }
 
 impl WorldQuery for DynamicQuery {
@@ -46,12 +76,25 @@ impl WorldQuery for DynamicQuery {
 }
 
 impl WorldQuery for DynamicFilterQuery {
-    type Fetch = DynamicFilterFetch;
-    type State = ();
+    type Fetch = DynamicSetFilterFetch;
+    type State = DynamicSetFilterState;
 }
 
 pub struct DynamicSetFetchState {
     params: Vec<DynamicFetchState>,
+}
+
+pub struct DynamicFilterFetch {
+    storage_type: StorageType,
+}
+
+pub struct DynamicFilterState {
+    component_id: ComponentId,
+    without: bool,
+}
+
+pub struct DynamicSetFilterState {
+    params: Vec<DynamicFilterState>,
 }
 
 impl IDynamicQuery for DynamicQuery {
@@ -71,11 +114,27 @@ impl IDynamicQuery for DynamicQuery {
 }
 
 impl IDynamicQuery for DynamicFilterQuery {
-    type Fetch = DynamicFilterFetch;
-    type State = ();
+    type Fetch = DynamicSetFilterFetch;
+    type State = DynamicSetFilterState;
 
-    fn state(&self, world: &World) -> Self::State {
-        todo!()
+    fn state(&self, _world: &World) -> Self::State {
+        DynamicSetFilterState {
+            params: self
+                .params
+                .set
+                .iter()
+                .map(|f| match f {
+                    DynamicFilter::With { component_id } => DynamicFilterState {
+                        component_id: *component_id,
+                        without: false,
+                    },
+                    DynamicFilter::Without { component_id } => DynamicFilterState {
+                        component_id: *component_id,
+                        without: true,
+                    },
+                })
+                .collect(),
+        }
     }
 }
 
@@ -84,11 +143,6 @@ pub trait IDynamicQuery {
     type State: FetchState;
 
     fn state(&self, world: &World) -> Self::State;
-}
-
-pub struct DynamicFilterFetch {
-    param: DynamicParam,
-    table_components: NonNull<u8>,
 }
 
 pub enum DynamicItem {
@@ -402,45 +456,6 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
     }
 }
 
-impl<'w, 's> Fetch<'w, 's> for DynamicFilterFetch {
-    type Item = bool;
-    type State = ();
-
-    unsafe fn init(
-        world: &World,
-        state: &Self::State,
-        last_change_tick: u32,
-        change_tick: u32,
-    ) -> Self {
-        todo!()
-    }
-
-    fn is_dense(&self) -> bool {
-        todo!()
-    }
-
-    unsafe fn set_archetype(
-        &mut self,
-        state: &Self::State,
-        archetype: &Archetype,
-        tables: &Tables,
-    ) {
-        todo!()
-    }
-
-    unsafe fn set_table(&mut self, state: &Self::State, table: &Table) {
-        todo!()
-    }
-
-    unsafe fn archetype_fetch(&mut self, archetype_index: usize) -> Self::Item {
-        todo!()
-    }
-
-    unsafe fn table_fetch(&mut self, table_row: usize) -> Self::Item {
-        todo!()
-    }
-}
-
 #[derive(Debug)]
 pub struct DynamicFetchState {
     param: DynamicParam,
@@ -451,6 +466,7 @@ unsafe impl FetchState for DynamicFetchState {
         unimplemented!()
     }
 
+    #[inline]
     fn update_component_access(&self, access: &mut FilteredAccess<ComponentId>) {
         match &self.param {
             DynamicParam::Component { id, .. } | DynamicParam::OptionalComponent { id, .. } => {
@@ -464,6 +480,7 @@ unsafe impl FetchState for DynamicFetchState {
         }
     }
 
+    #[inline]
     fn update_archetype_component_access(
         &self,
         archetype: &Archetype,
@@ -528,10 +545,12 @@ impl<'w, 's> Fetch<'w, 's> for DynamicSetFetch {
         }
     }
 
+    #[inline]
     fn is_dense(&self) -> bool {
         self.params_fetch.iter().all(|p| p.is_dense())
     }
 
+    #[inline]
     unsafe fn set_archetype(
         &mut self,
         state: &Self::State,
@@ -544,6 +563,7 @@ impl<'w, 's> Fetch<'w, 's> for DynamicSetFetch {
             .for_each(|(p, s)| p.set_archetype(s, archetype, tables))
     }
 
+    #[inline]
     unsafe fn set_table(&mut self, state: &Self::State, table: &Table) {
         self.params_fetch
             .iter_mut()
@@ -551,6 +571,7 @@ impl<'w, 's> Fetch<'w, 's> for DynamicSetFetch {
             .for_each(|(p, s)| p.set_table(s, table))
     }
 
+    #[inline]
     unsafe fn archetype_fetch(&mut self, archetype_index: usize) -> Self::Item {
         DynamicSetFetchItem {
             items: self
@@ -561,6 +582,7 @@ impl<'w, 's> Fetch<'w, 's> for DynamicSetFetch {
         }
     }
 
+    #[inline]
     unsafe fn table_fetch(&mut self, table_row: usize) -> Self::Item {
         DynamicSetFetchItem {
             items: self
@@ -577,12 +599,14 @@ unsafe impl FetchState for DynamicSetFetchState {
         unimplemented!()
     }
 
+    #[inline]
     fn update_component_access(&self, access: &mut FilteredAccess<ComponentId>) {
         self.params
             .iter()
             .for_each(|p| p.update_component_access(access))
     }
 
+    #[inline]
     fn update_archetype_component_access(
         &self,
         archetype: &Archetype,
@@ -593,11 +617,187 @@ unsafe impl FetchState for DynamicSetFetchState {
             .for_each(|p| p.update_archetype_component_access(archetype, access))
     }
 
+    #[inline]
     fn matches_archetype(&self, archetype: &Archetype) -> bool {
         self.params.iter().all(|p| p.matches_archetype(archetype))
     }
 
+    #[inline]
     fn matches_table(&self, table: &Table) -> bool {
         self.params.iter().all(|p| p.matches_table(table))
+    }
+}
+
+impl<'w, 's> Fetch<'w, 's> for DynamicFilterFetch {
+    type Item = bool;
+    type State = DynamicFilterState;
+
+    unsafe fn init(
+        world: &World,
+        state: &Self::State,
+        _last_change_tick: u32,
+        _change_tick: u32,
+    ) -> Self {
+        Self {
+            storage_type: world
+                .components
+                .get_info(state.component_id)
+                .expect("Expected component to exist")
+                .storage_type(),
+        }
+    }
+
+    #[inline]
+    fn is_dense(&self) -> bool {
+        self.storage_type == StorageType::Table
+    }
+
+    #[inline]
+    unsafe fn set_archetype(
+        &mut self,
+        _state: &Self::State,
+        _archetype: &Archetype,
+        _tables: &Tables,
+    ) {
+    }
+
+    #[inline]
+    unsafe fn set_table(&mut self, _state: &Self::State, _table: &Table) {}
+
+    #[inline]
+    unsafe fn archetype_fetch(&mut self, _archetype_index: usize) -> Self::Item {
+        true
+    }
+
+    #[inline]
+    unsafe fn table_fetch(&mut self, _table_row: usize) -> Self::Item {
+        true
+    }
+}
+
+unsafe impl FetchState for DynamicFilterState {
+    fn init(_world: &mut World) -> Self {
+        unimplemented!()
+    }
+
+    #[inline]
+    fn update_component_access(&self, access: &mut FilteredAccess<ComponentId>) {
+        if self.without {
+            access.add_without(self.component_id)
+        } else {
+            access.add_with(self.component_id)
+        }
+    }
+
+    #[inline]
+    fn update_archetype_component_access(
+        &self,
+        _archetype: &Archetype,
+        _access: &mut Access<ArchetypeComponentId>,
+    ) {
+    }
+
+    #[inline]
+    fn matches_archetype(&self, archetype: &Archetype) -> bool {
+        archetype.contains(self.component_id) ^ self.without
+    }
+
+    #[inline]
+    fn matches_table(&self, table: &Table) -> bool {
+        table.has_column(self.component_id) ^ self.without
+    }
+}
+
+unsafe impl FetchState for DynamicSetFilterState {
+    fn init(world: &mut World) -> Self {
+        unimplemented!()
+    }
+
+    #[inline]
+    fn update_component_access(&self, access: &mut FilteredAccess<ComponentId>) {
+        self.params
+            .iter()
+            .for_each(|p| p.update_component_access(access))
+    }
+
+    #[inline]
+    fn update_archetype_component_access(
+        &self,
+        archetype: &Archetype,
+        access: &mut Access<ArchetypeComponentId>,
+    ) {
+        self.params
+            .iter()
+            .for_each(|p| p.update_archetype_component_access(archetype, access))
+    }
+
+    #[inline]
+    fn matches_archetype(&self, archetype: &Archetype) -> bool {
+        self.params.iter().all(|p| p.matches_archetype(archetype))
+    }
+
+    #[inline]
+    fn matches_table(&self, table: &Table) -> bool {
+        self.params.iter().all(|p| p.matches_table(table))
+    }
+}
+
+impl<'w, 's> Fetch<'w, 's> for DynamicSetFilterFetch {
+    type Item = bool;
+    type State = DynamicSetFilterState;
+
+    unsafe fn init(
+        world: &World,
+        state: &Self::State,
+        last_change_tick: u32,
+        change_tick: u32,
+    ) -> Self {
+        Self {
+            params_fetch: state
+                .params
+                .iter()
+                .map(|f| DynamicFilterFetch::init(world, f, last_change_tick, change_tick))
+                .collect(),
+        }
+    }
+
+    #[inline]
+    fn is_dense(&self) -> bool {
+        self.params_fetch.iter().all(|p| p.is_dense())
+    }
+
+    #[inline]
+    unsafe fn set_archetype(
+        &mut self,
+        state: &Self::State,
+        archetype: &Archetype,
+        tables: &Tables,
+    ) {
+        self.params_fetch
+            .iter_mut()
+            .zip(state.params.iter())
+            .for_each(|(p, s)| p.set_archetype(s, archetype, tables))
+    }
+
+    #[inline]
+    unsafe fn set_table(&mut self, state: &Self::State, table: &Table) {
+        self.params_fetch
+            .iter_mut()
+            .zip(state.params.iter())
+            .for_each(|(p, s)| p.set_table(s, table))
+    }
+
+    #[inline]
+    unsafe fn archetype_fetch(&mut self, archetype_index: usize) -> Self::Item {
+        self.params_fetch
+            .iter_mut()
+            .all(|p| p.archetype_fetch(archetype_index))
+    }
+
+    #[inline]
+    unsafe fn table_fetch(&mut self, table_row: usize) -> Self::Item {
+        self.params_fetch
+            .iter_mut()
+            .all(|p| p.table_fetch(table_row))
     }
 }
