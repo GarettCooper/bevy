@@ -1,15 +1,13 @@
 use std::alloc::Layout;
 use std::cell::UnsafeCell;
-use std::iter::Filter;
-use std::ptr;
+
 use std::ptr::NonNull;
 
-use crate::archetype::{Archetype, ArchetypeComponentId};
-use crate::component::{Component, ComponentId, ComponentTicks, StorageType};
+use crate::component::{ComponentId, ComponentTicks, StorageType};
 use crate::entity::Entity;
-use crate::query::{Access, Fetch, FetchState, FilterFetch, FilteredAccess, WorldQuery};
-use crate::schedule::DynEq;
-use crate::storage::{ComponentSparseSet, Table, Tables};
+use crate::query::{Fetch, FetchState, WorldQuery};
+
+use crate::storage::ComponentSparseSet;
 use crate::world::World;
 
 mod fetch;
@@ -18,8 +16,8 @@ mod filter;
 #[derive(Debug, Clone)]
 pub enum DynamicParam {
     Entity,
-    Component { id: ComponentId },
-    OptionalComponent { id: ComponentId },
+    Component { component_id: ComponentId },
+    OptionalComponent { component_id: ComponentId },
 }
 
 #[derive(Debug, Clone)]
@@ -53,11 +51,11 @@ pub struct DynamicFilterQuery {
 }
 
 pub struct DynamicSetFetch {
-    params_fetch: Vec<DynamicFetch>,
+    params_fetch: Box<[DynamicFetch]>,
 }
 
 pub struct DynamicSetFilterFetch {
-    params_fetch: Vec<DynamicFilterFetch>,
+    params_fetch: Box<[DynamicFilterFetch]>,
 }
 
 impl WorldQuery for DynamicQuery {
@@ -71,7 +69,7 @@ impl WorldQuery for DynamicFilterQuery {
 }
 
 pub struct DynamicSetFetchState {
-    params: Vec<DynamicFetchState>,
+    params: Box<[DynamicFetchState]>,
 }
 
 pub struct DynamicFilterFetch {
@@ -84,14 +82,14 @@ pub struct DynamicFilterState {
 }
 
 pub struct DynamicSetFilterState {
-    params: Vec<DynamicFilterState>,
+    params: Box<[DynamicFilterState]>,
 }
 
 impl IDynamicQuery for DynamicQuery {
     type Fetch = DynamicSetFetch;
     type State = DynamicSetFetchState;
 
-    fn state(&self, world: &World) -> Self::State {
+    fn state(&self, _world: &World) -> Self::State {
         DynamicSetFetchState {
             params: self
                 .params
@@ -100,6 +98,32 @@ impl IDynamicQuery for DynamicQuery {
                 .map(|p| DynamicFetchState { param: p.clone() })
                 .collect(),
         }
+    }
+}
+
+impl DynamicParam {
+    fn get_layout(&self, world: &World) -> Layout {
+        match self {
+            DynamicParam::Entity => Layout::new::<Entity>(),
+            DynamicParam::Component { component_id: id } => {
+                world.components.get_info(*id).unwrap().layout()
+            }
+            DynamicParam::OptionalComponent { .. } => unimplemented!(),
+        }
+    }
+}
+
+impl DynamicParamSet {
+    pub fn get_layout(&self, world: &World) -> (Layout, Vec<usize>) {
+        let mut iter = self.set.iter();
+        let mut offsets = vec![0];
+        let mut full_layout = iter.next().unwrap().get_layout(world);
+        for param in iter {
+            let (layout, offset) = full_layout.extend(param.get_layout(world)).unwrap();
+            full_layout = layout;
+            offsets.push(offset)
+        }
+        (full_layout, offsets)
     }
 }
 
@@ -178,5 +202,5 @@ pub struct DynamicFetchState {
 }
 
 pub struct DynamicSetFetchItem {
-    pub items: Vec<DynamicItem>,
+    pub items: Box<[DynamicItem]>,
 }

@@ -36,7 +36,9 @@ fn main() {
         params: DynamicParamSet {
             set: vec![
                 DynamicParam::Entity,
-                DynamicParam::Component { id: test_vector_id },
+                DynamicParam::Component {
+                    component_id: test_vector_id,
+                },
             ],
         },
     };
@@ -80,7 +82,9 @@ fn main() {
     let second_query = DynamicQuery {
         params: DynamicParamSet {
             set: vec![
-                DynamicParam::Component { id: test_vector_id },
+                DynamicParam::Component {
+                    component_id: test_vector_id,
+                },
                 //                DynamicParam::OptionalComponent { id: test_grid_id },
             ],
         },

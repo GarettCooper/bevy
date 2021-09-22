@@ -41,7 +41,7 @@ unsafe impl FetchState for DynamicFilterState {
 }
 
 unsafe impl FetchState for DynamicSetFilterState {
-    fn init(world: &mut World) -> Self {
+    fn init(_world: &mut World) -> Self {
         unimplemented!()
     }
 
