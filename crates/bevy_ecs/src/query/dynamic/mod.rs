@@ -14,40 +14,103 @@ mod fetch;
 mod filter;
 
 #[derive(Debug, Clone)]
-pub enum DynamicParam {
+enum DynamicParam {
     Entity,
     Component { component_id: ComponentId },
     OptionalComponent { component_id: ComponentId },
 }
 
 #[derive(Debug, Clone)]
-pub enum DynamicFilter {
+enum DynamicFilter {
     With { component_id: ComponentId },
     Without { component_id: ComponentId },
 }
 
 #[derive(Debug, Clone)]
-pub struct DynamicParamSet {
-    pub set: Vec<DynamicParam>,
+struct DynamicParamSet {
+    set: Box<[DynamicParam]>,
 }
 
 #[derive(Debug, Clone)]
-pub struct DynamicFilterSet {
-    pub set: Vec<DynamicFilter>,
+struct DynamicFilterSet {
+    set: Box<[DynamicFilter]>,
 }
 
 pub struct DynamicQuery {
-    pub params: DynamicParamSet,
+    params: DynamicParamSet,
 }
 
 impl DynamicQuery {
-    pub fn new(params: DynamicParamSet) -> Self {
-        Self { params }
+    pub fn new() -> DynamicQueryBuilder {
+        DynamicQueryBuilder { params: Vec::new() }
+    }
+}
+
+pub struct DynamicQueryBuilder {
+    params: Vec<DynamicParam>,
+}
+
+impl DynamicQueryBuilder {
+    pub fn entity(&mut self) -> &mut Self {
+        self.params.push(DynamicParam::Entity);
+        self
+    }
+
+    pub fn component(&mut self, component_id: ComponentId) -> &mut Self {
+        self.params.push(DynamicParam::Component { component_id });
+        self
+    }
+
+    pub fn optional_component(&mut self, component_id: ComponentId) -> &mut Self {
+        self.params
+            .push(DynamicParam::OptionalComponent { component_id });
+        self
+    }
+
+    pub fn build(&mut self) -> DynamicQuery {
+        DynamicQuery {
+            params: DynamicParamSet {
+                set: self.params.clone().into_boxed_slice(),
+            },
+        }
     }
 }
 
 pub struct DynamicFilterQuery {
-    pub params: DynamicFilterSet,
+    params: DynamicFilterSet,
+}
+
+impl DynamicFilterQuery {
+    pub fn new() -> DynamicFilterQueryBuilder {
+        DynamicFilterQueryBuilder {
+            conditions: Vec::new(),
+        }
+    }
+}
+
+pub struct DynamicFilterQueryBuilder {
+    conditions: Vec<DynamicFilter>,
+}
+
+impl DynamicFilterQueryBuilder {
+    pub fn with_component(&mut self, component_id: ComponentId) -> &mut Self {
+        self.conditions.push(DynamicFilter::With { component_id });
+        self
+    }
+
+    pub fn without_component(&mut self, component_id: ComponentId) -> &mut Self {
+        self.conditions
+            .push(DynamicFilter::Without { component_id });
+        self
+    }
+
+    pub fn build(&mut self) -> DynamicFilterQuery {
+        DynamicFilterQuery {
+            params: DynamicFilterSet {
+                set: self.conditions.clone().into_boxed_slice(),
+            },
+        }
+    }
 }
 
 pub struct DynamicSetFetch {

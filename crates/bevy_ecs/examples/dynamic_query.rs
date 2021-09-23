@@ -1,8 +1,8 @@
 use bevy_ecs::component::{ComponentDescriptor, StorageType};
 use bevy_ecs::prelude::World;
 use bevy_ecs::query::dynamic::{
-    DynamicFilter, DynamicFilterQuery, DynamicFilterSet, DynamicItem, DynamicParam,
-    DynamicParamSet, DynamicQuery,
+    DynamicFilter, DynamicFilterQuery, DynamicFilterQueryBuilder, DynamicFilterSet, DynamicItem,
+    DynamicParam, DynamicParamSet, DynamicQuery, DynamicQueryBuilder,
 };
 
 #[derive(PartialEq, Debug)]
@@ -32,16 +32,10 @@ fn main() {
         ))
         .unwrap();
 
-    let query = DynamicQuery {
-        params: DynamicParamSet {
-            set: vec![
-                DynamicParam::Entity,
-                DynamicParam::Component {
-                    component_id: test_vector_id,
-                },
-            ],
-        },
-    };
+    let query = DynamicQuery::new()
+        .entity()
+        .component(test_vector_id)
+        .build();
 
     for i in 0..10 {
         let mut entity = world.spawn();
@@ -79,24 +73,11 @@ fn main() {
         }
     }
 
-    let second_query = DynamicQuery {
-        params: DynamicParamSet {
-            set: vec![
-                DynamicParam::Component {
-                    component_id: test_vector_id,
-                },
-                //                DynamicParam::OptionalComponent { id: test_grid_id },
-            ],
-        },
-    };
+    let second_query = DynamicQuery::new().component(test_vector_id).build();
 
-    let filter_query = DynamicFilterQuery {
-        params: DynamicFilterSet {
-            set: vec![DynamicFilter::Without {
-                component_id: test_grid_id,
-            }],
-        },
-    };
+    let filter_query = DynamicFilterQuery::new()
+        .without_component(test_grid_id)
+        .build();
 
     println!(
         "Test vector id: {:?}, test grid id: {:?}",
