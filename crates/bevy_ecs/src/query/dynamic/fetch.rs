@@ -1,21 +1,20 @@
-use std::cell::UnsafeCell;
-
-use bevy_reflect::erased_serde::private::serde::__private::ptr;
-use bevy_reflect::erased_serde::private::serde::__private::ptr::NonNull;
-
 use crate::archetype::{Archetype, ArchetypeComponentId};
 use crate::component::{ComponentId, ComponentTicks, StorageType};
 use crate::entity::Entity;
-use crate::prelude::World;
 use crate::query::dynamic::{
-    DynamicFetch, DynamicFetchState, DynamicItem, DynamicParam, DynamicSetFetch,
-    DynamicSetFetchItem, DynamicSetFetchState,
+    DynamicComponentReference, DynamicFetch, DynamicFetchState, DynamicItem,
+    DynamicMutComponentReference, DynamicParam, DynamicQueryEntity, DynamicSetFetch,
+    DynamicSetFetchState,
 };
 use crate::query::{Access, Fetch, FetchState, FilteredAccess};
 use crate::storage::{ComponentSparseSet, Table, Tables};
+use crate::world::World;
+use core::ptr;
+use std::cell::UnsafeCell;
+use std::ptr::NonNull;
 
 impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
-    type Item = DynamicItem;
+    type Item = DynamicItem<'w>;
     type State = DynamicFetchState;
 
     unsafe fn init(
@@ -26,46 +25,30 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
     ) -> Self {
         match &state.param {
             DynamicParam::Component {
-                component_id: id, ..
+                component_id,
+                mutable,
+                optional,
             } => {
                 let component_info = world
                     .components
-                    .get_info(*id)
+                    .get_info(*component_id)
                     .expect("Expected component to exist");
 
                 Self::Component {
-                    component_id: *id,
-                    component_layout: component_info.layout(),
-                    storage_type: component_info.storage_type(),
-                    table_components: NonNull::dangling(),
-                    entities: ptr::null::<Entity>(),
-                    entity_table_rows: ptr::null::<usize>(),
-                    sparse_set: if component_info.storage_type() == StorageType::SparseSet {
-                        world.storages().sparse_sets.get(*id).unwrap()
-                    } else {
-                        ptr::null::<ComponentSparseSet>()
-                    },
-                    table_ticks: ptr::null::<UnsafeCell<ComponentTicks>>(),
-                    last_change_tick,
-                    change_tick,
-                }
-            }
-            DynamicParam::OptionalComponent { component_id: id } => {
-                let component_info = world
-                    .components
-                    .get_info(*id)
-                    .expect("Expected component to exist");
-
-                Self::OptionalComponent {
+                    mutable: *mutable,
+                    optional: *optional,
                     matches: false,
-                    component_id: *id,
+                    type_id: component_info
+                        .type_id()
+                        .expect("Expected component to have Type ID"),
+                    component_id: *component_id,
                     component_layout: component_info.layout(),
                     storage_type: component_info.storage_type(),
                     table_components: NonNull::dangling(),
                     entities: ptr::null::<Entity>(),
                     entity_table_rows: ptr::null::<usize>(),
                     sparse_set: if component_info.storage_type() == StorageType::SparseSet {
-                        world.storages().sparse_sets.get(*id).unwrap()
+                        world.storages().sparse_sets.get(*component_id).unwrap()
                     } else {
                         ptr::null::<ComponentSparseSet>()
                     },
@@ -87,15 +70,7 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
                 storage_type: StorageType::Table,
                 ..
             } => true,
-            Self::OptionalComponent {
-                storage_type: StorageType::Table,
-                ..
-            } => true,
             Self::Component {
-                storage_type: StorageType::SparseSet,
-                ..
-            } => false,
-            Self::OptionalComponent {
                 storage_type: StorageType::SparseSet,
                 ..
             } => false,
@@ -117,26 +92,11 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
                 ref mut entity_table_rows,
                 ref mut table_components,
                 ref mut table_ticks,
-                ..
-            } => {
-                *entity_table_rows = archetype.entity_table_rows().as_ptr();
-                let column = tables[archetype.table_id()].get_column(*id).unwrap();
-                *table_components = column.get_data_ptr();
-                *table_ticks = column.get_ticks_ptr();
-            }
-            Self::OptionalComponent {
                 ref mut matches,
-                component_id: id,
-                storage_type: StorageType::Table,
-                ref mut entity_table_rows,
-                ref mut table_components,
-                ref mut table_ticks,
+                optional,
                 ..
             } => {
-                *matches = DynamicFetchState {
-                    param: DynamicParam::Component { component_id: *id },
-                }
-                .matches_archetype(archetype);
+                *matches = !*optional || archetype.contains(*id);
                 if *matches {
                     *entity_table_rows = archetype.entity_table_rows().as_ptr();
                     let column = tables[archetype.table_id()].get_column(*id).unwrap();
@@ -144,29 +104,20 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
                     *table_ticks = column.get_ticks_ptr();
                 }
             }
-            Self::OptionalComponent {
-                ref mut matches,
-                component_id,
+            Self::Component {
+                component_id: id,
                 storage_type: StorageType::SparseSet,
                 ref mut entities,
+                ref mut matches,
+                optional,
                 ..
             } => {
-                *matches = DynamicFetchState {
-                    param: DynamicParam::Component {
-                        component_id: *component_id,
-                    },
-                }
-                .matches_archetype(archetype);
+                *matches = !*optional || archetype.contains(*id);
                 if *matches {
                     *entities = archetype.entities().as_ptr()
                 }
             }
-            Self::Component {
-                storage_type: StorageType::SparseSet,
-                ref mut entities,
-                ..
-            }
-            | Self::Entity { ref mut entities } => *entities = archetype.entities().as_ptr(),
+            Self::Entity { ref mut entities } => *entities = archetype.entities().as_ptr(),
         }
     }
 
@@ -177,23 +128,11 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
                 component_id: id,
                 ref mut table_components,
                 ref mut table_ticks,
-                ..
-            } => {
-                let column = table.get_column(*id).unwrap();
-                *table_components = column.get_data_ptr().cast::<u8>();
-                *table_ticks = column.get_ticks_ptr();
-            }
-            Self::OptionalComponent {
                 ref mut matches,
-                component_id: id,
-                ref mut table_components,
-                ref mut table_ticks,
+                optional,
                 ..
             } => {
-                *matches = DynamicFetchState {
-                    param: DynamicParam::Component { component_id: *id },
-                }
-                .matches_table(table);
+                *matches = !*optional || table.has_column(*id);
                 if *matches {
                     let column = table.get_column(*id).unwrap();
                     *table_components = column.get_data_ptr().cast::<u8>();
@@ -208,49 +147,67 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
     unsafe fn archetype_fetch(&mut self, archetype_index: usize) -> Self::Item {
         match self {
             Self::Component {
-                component_layout,
-                storage_type: StorageType::Table,
-                entity_table_rows,
-                table_components,
+                optional: true,
+                matches: false,
                 ..
-            }
-            | Self::OptionalComponent {
-                matches: true,
+            } => DynamicItem::ComponentNotPresent,
+            Self::Component {
                 component_layout,
                 storage_type: StorageType::Table,
                 entity_table_rows,
                 table_components,
+                type_id,
+                mutable,
                 ..
             } => {
                 let table_row = *entity_table_rows.add(archetype_index);
-                DynamicItem::Component {
-                    pointer: NonNull::new_unchecked(
-                        table_components
-                            .as_ptr()
-                            .add(table_row * component_layout.size()),
-                    ),
+                let pointer = NonNull::new_unchecked(
+                    table_components
+                        .as_ptr()
+                        .add(table_row * component_layout.size())
+                        .cast::<()>(),
+                );
+
+                if *mutable {
+                    DynamicItem::MutableComponent(DynamicMutComponentReference {
+                        type_id: *type_id,
+                        pointer,
+                        phantom: Default::default(),
+                    })
+                } else {
+                    DynamicItem::Component(DynamicComponentReference {
+                        type_id: *type_id,
+                        pointer,
+                        phantom: Default::default(),
+                    })
                 }
             }
             Self::Component {
                 storage_type: StorageType::SparseSet,
                 entities,
                 sparse_set,
-                ..
-            }
-            | Self::OptionalComponent {
-                matches: true,
-                storage_type: StorageType::SparseSet,
-                entities,
-                sparse_set,
+                mutable,
+                type_id,
                 ..
             } => {
                 let entity = *entities.add(archetype_index);
                 let (component, _) = (**sparse_set).get_with_ticks(entity).unwrap();
-                DynamicItem::Component {
-                    pointer: NonNull::new_unchecked(component),
+                let pointer = NonNull::new_unchecked(component.cast::<()>());
+
+                if *mutable {
+                    DynamicItem::MutableComponent(DynamicMutComponentReference {
+                        type_id: *type_id,
+                        pointer,
+                        phantom: Default::default(),
+                    })
+                } else {
+                    DynamicItem::Component(DynamicComponentReference {
+                        type_id: *type_id,
+                        pointer,
+                        phantom: Default::default(),
+                    })
                 }
             }
-            Self::OptionalComponent { matches: false, .. } => DynamicItem::NoMatch,
             Self::Entity { entities } => DynamicItem::Entity(*entities.add(archetype_index)),
         }
     }
@@ -259,23 +216,37 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
     unsafe fn table_fetch(&mut self, table_row: usize) -> Self::Item {
         match self {
             Self::Component {
+                optional: true,
+                matches: false,
+                ..
+            } => DynamicItem::ComponentNotPresent,
+            Self::Component {
                 component_layout,
                 table_components,
+                type_id,
+                mutable,
                 ..
-            }
-            | Self::OptionalComponent {
-                matches: true,
-                component_layout,
-                table_components,
-                ..
-            } => DynamicItem::Component {
-                pointer: NonNull::new_unchecked(
+            } => {
+                let pointer = NonNull::new_unchecked(
                     table_components
                         .as_ptr()
-                        .add(table_row * component_layout.size()),
-                ),
-            },
-            Self::OptionalComponent { matches: false, .. } => DynamicItem::NoMatch,
+                        .add(table_row * component_layout.size())
+                        .cast::<()>(),
+                );
+                if *mutable {
+                    DynamicItem::MutableComponent(DynamicMutComponentReference {
+                        type_id: *type_id,
+                        pointer,
+                        phantom: Default::default(),
+                    })
+                } else {
+                    DynamicItem::Component(DynamicComponentReference {
+                        type_id: *type_id,
+                        pointer,
+                        phantom: Default::default(),
+                    })
+                }
+            }
             Self::Entity { entities } => DynamicItem::Entity(*(*entities).add(table_row)),
         }
     }
@@ -290,15 +261,25 @@ unsafe impl FetchState for DynamicFetchState {
     fn update_component_access(&self, access: &mut FilteredAccess<ComponentId>) {
         match &self.param {
             DynamicParam::Component {
-                component_id: id, ..
-            }
-            | DynamicParam::OptionalComponent {
-                component_id: id, ..
+                component_id: id,
+                mutable: true,
+                ..
             } => {
                 if access.access().has_read(*id) {
                     panic!("Dynamic access conflicts with a previous access in this query. Mutable component access must be unique.");
                 }
+
                 access.add_write(*id);
+            }
+            DynamicParam::Component {
+                component_id: id,
+                mutable: false,
+                ..
+            } => {
+                if access.access().has_write(*id) {
+                    panic!("Dynamic access conflicts with a previous access in this query. Mutable component access must be unique.");
+                }
+                access.add_read(*id);
             }
             DynamicParam::Entity => {}
         }
@@ -312,19 +293,19 @@ unsafe impl FetchState for DynamicFetchState {
     ) {
         match &self.param {
             DynamicParam::Component {
-                component_id: id, ..
+                component_id: id,
+                optional,
+                mutable,
+                ..
             } => {
-                if let Some(archetype_component_id) = archetype.get_archetype_component_id(*id) {
-                    access.add_write(archetype_component_id);
-                }
-            }
-            DynamicParam::OptionalComponent {
-                component_id: id, ..
-            } => {
-                if archetype.contains(*id) {
+                if !*optional || archetype.contains(*id) {
                     if let Some(archetype_component_id) = archetype.get_archetype_component_id(*id)
                     {
-                        access.add_write(archetype_component_id);
+                        if *mutable {
+                            access.add_write(archetype_component_id);
+                        } else {
+                            access.add_read(archetype_component_id);
+                        }
                     }
                 }
             }
@@ -335,24 +316,28 @@ unsafe impl FetchState for DynamicFetchState {
     fn matches_archetype(&self, archetype: &Archetype) -> bool {
         match &self.param {
             DynamicParam::Component {
-                component_id: id, ..
+                component_id: id,
+                optional: false,
+                ..
             } => archetype.contains(*id),
-            DynamicParam::OptionalComponent { .. } | DynamicParam::Entity => true,
+            DynamicParam::Component { optional: true, .. } | DynamicParam::Entity => true,
         }
     }
 
     fn matches_table(&self, table: &Table) -> bool {
         match &self.param {
             DynamicParam::Component {
-                component_id: id, ..
+                component_id: id,
+                optional: false,
+                ..
             } => table.has_column(*id),
-            DynamicParam::OptionalComponent { .. } | DynamicParam::Entity => true,
+            DynamicParam::Component { optional: true, .. } | DynamicParam::Entity => true,
         }
     }
 }
 
 impl<'w, 's> Fetch<'w, 's> for DynamicSetFetch {
-    type Item = DynamicSetFetchItem;
+    type Item = DynamicQueryEntity<'w>;
     type State = DynamicSetFetchState;
 
     unsafe fn init(
@@ -398,7 +383,7 @@ impl<'w, 's> Fetch<'w, 's> for DynamicSetFetch {
 
     #[inline]
     unsafe fn archetype_fetch(&mut self, archetype_index: usize) -> Self::Item {
-        DynamicSetFetchItem {
+        DynamicQueryEntity {
             items: self
                 .params_fetch
                 .iter_mut()
@@ -409,7 +394,7 @@ impl<'w, 's> Fetch<'w, 's> for DynamicSetFetch {
 
     #[inline]
     unsafe fn table_fetch(&mut self, table_row: usize) -> Self::Item {
-        DynamicSetFetchItem {
+        DynamicQueryEntity {
             items: self
                 .params_fetch
                 .iter_mut()

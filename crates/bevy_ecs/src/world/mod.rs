@@ -7,6 +7,8 @@ pub use entity_ref::*;
 pub use spawn_batch::*;
 pub use world_cell::*;
 
+use crate::query::dynamic::{DynamicFilterQuery, DynamicQuery};
+use crate::query::DynamicQueryState;
 use crate::{
     archetype::{ArchetypeComponentId, ArchetypeComponentInfo, ArchetypeId, Archetypes},
     bundle::{Bundle, BundleInserter, BundleSpawner, Bundles},
@@ -22,8 +24,6 @@ use std::{
     fmt,
     sync::atomic::{AtomicU32, Ordering},
 };
-use crate::query::{DynamicFilteredQueryState, DynamicQueryState};
-use crate::query::dynamic::{DynamicQuery, DynamicFilterQuery};
 
 mod identifier;
 
@@ -544,13 +544,11 @@ impl World {
     }
 
     #[inline]
-    pub fn query_dynamic(&mut self, query: &DynamicQuery) -> QueryState<DynamicQuery, ()> {
+    pub fn query_dynamic(
+        &mut self,
+        query: &DynamicQuery,
+    ) -> QueryState<DynamicQuery, DynamicFilterQuery> {
         QueryState::new_dynamic(self, query)
-    }
-
-    #[inline]
-    pub fn query_dynamic_filtered(&mut self, query: &DynamicQuery, filter_query: &DynamicFilterQuery) -> QueryState<DynamicQuery, DynamicFilterQuery> {
-        QueryState::new_dynamic_filtered(self, query, filter_query)
     }
 
     /// Returns [QueryState] for the given filtered [WorldQuery], which is used to efficiently

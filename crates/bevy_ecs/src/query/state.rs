@@ -1,3 +1,4 @@
+use crate::query::dynamic::{DynamicFilterQuery, DynamicQuery};
 use crate::{
     archetype::{Archetype, ArchetypeComponentId, ArchetypeGeneration, ArchetypeId},
     component::ComponentId,
@@ -12,7 +13,6 @@ use crate::{
 use bevy_tasks::TaskPool;
 use fixedbitset::FixedBitSet;
 use thiserror::Error;
-use crate::query::dynamic::{DynamicQuery, IDynamicQuery, DynamicFilterQuery};
 
 /// Provides scoped access to a [`World`] state according to a given [`WorldQuery`] and query filter.
 pub struct QueryState<Q: WorldQuery, F: WorldQuery = ()>
@@ -70,7 +70,6 @@ where
         state.validate_world_and_update_archetypes(world);
         state
     }
-
 
     /// Checks if the query is empty for the given [`World`], where the last change and current tick are given.
     #[inline]
@@ -621,52 +620,16 @@ where
 }
 
 pub trait DynamicQueryState {
-    fn new_dynamic(world: &mut World, query: &DynamicQuery) -> QueryState<DynamicQuery, ()>;
+    fn new_dynamic(world: &mut World, query: &DynamicQuery) -> Self;
 }
 
-pub trait DynamicFilteredQueryState {
-    fn new_dynamic_filtered(world: &mut World, query: &DynamicQuery, filter: &DynamicFilterQuery) -> QueryState<DynamicQuery, DynamicFilterQuery>;
-}
-
-impl DynamicQueryState for QueryState<DynamicQuery, ()> {
-    fn new_dynamic(world: &mut World, query: &DynamicQuery) -> QueryState<DynamicQuery, ()> {
-        let fetch_state = query.state(world);
-        let filter_state =  <<() as Fetch>::State as FetchState>::init(world);
-
-        let mut component_access = FilteredAccess::default();
-        fetch_state.update_component_access(&mut component_access);
-
-        // Use a temporary empty FilteredAccess for filters. This prevents them from conflicting with the
-        // main Query's `fetch_state` access. Filters are allowed to conflict with the main query fetch
-        // because they are evaluated *before* a specific reference is constructed.
-        let mut filter_component_access = FilteredAccess::default();
-        filter_state.update_component_access(&mut filter_component_access);
-
-        // Merge the temporary filter access with the main access. This ensures that filter access is
-        // properly considered in a global "cross-query" context (both within systems and across systems).
-        component_access.extend(&filter_component_access);
-
-        let mut state = Self {
-            world_id: world.id(),
-            archetype_generation: ArchetypeGeneration::initial(),
-            matched_table_ids: Vec::new(),
-            matched_archetype_ids: Vec::new(),
-            fetch_state,
-            filter_state,
-            component_access,
-            matched_tables: Default::default(),
-            matched_archetypes: Default::default(),
-            archetype_component_access: Default::default(),
-        };
-        state.validate_world_and_update_archetypes(world);
-        state
-    }
-}
-
-impl DynamicFilteredQueryState for QueryState<DynamicQuery, DynamicFilterQuery> {
-    fn new_dynamic_filtered(world: &mut World, query: &DynamicQuery, filter: &DynamicFilterQuery) -> QueryState<DynamicQuery, DynamicFilterQuery> {
-        let fetch_state = query.state(world);
-        let filter_state = filter.state(world);
+impl DynamicQueryState for QueryState<DynamicQuery, DynamicFilterQuery> {
+    fn new_dynamic(
+        world: &mut World,
+        query: &DynamicQuery,
+    ) -> QueryState<DynamicQuery, DynamicFilterQuery> {
+        let fetch_state = query.fetch_state();
+        let filter_state = query.filter_state();
 
         let mut component_access = FilteredAccess::default();
         fetch_state.update_component_access(&mut component_access);

@@ -1,9 +1,6 @@
 use bevy_ecs::component::{ComponentDescriptor, StorageType};
 use bevy_ecs::prelude::World;
-use bevy_ecs::query::dynamic::{
-    DynamicFilter, DynamicFilterQuery, DynamicFilterQueryBuilder, DynamicFilterSet, DynamicItem,
-    DynamicParam, DynamicParamSet, DynamicQuery, DynamicQueryBuilder,
-};
+use bevy_ecs::query::dynamic::{DynamicItem, DynamicQuery};
 
 #[derive(PartialEq, Debug)]
 struct TestComponent {
@@ -34,7 +31,8 @@ fn main() {
 
     let query = DynamicQuery::new()
         .entity()
-        .component(test_vector_id)
+        .mut_component(test_vector_id)
+        .without_component(test_grid_id)
         .build();
 
     for i in 0..10 {
@@ -54,63 +52,43 @@ fn main() {
     }
 
     let mut query_state = world.query_dynamic(&query);
-    for items in query_state.iter_mut(&mut world) {
+    for mut items in query_state.iter_mut(&mut world) {
         unsafe {
-            match items.items.as_slice() {
-                [DynamicItem::Entity(entity), DynamicItem::Component { pointer }] => {
-                    println!(
-                        "Entity:{} {:?}",
-                        entity.id(),
-                        *pointer.cast::<TestComponent>().as_ptr()
-                    );
-                    let reference = &mut *pointer.cast::<TestComponent>().as_ptr();
-                    reference.y = reference.x * reference.x;
-                    reference.z = reference.x * reference.x;
-                    reference.x = reference.x * reference.x;
+            match items.as_mut_slice() {
+                [DynamicItem::Entity(entity), DynamicItem::MutableComponent(reference)] => {
+                    let vector = reference.downcast_unchecked::<TestComponent>();
+                    println!("Entity:{} {:?}", entity.id(), vector);
+                    vector.y = vector.x * vector.x;
+                    vector.z = vector.x * vector.x;
+                    vector.x = vector.x * vector.x;
                 }
                 _ => unreachable!(),
             }
         }
     }
 
-    let second_query = DynamicQuery::new().component(test_vector_id).build();
-
-    let filter_query = DynamicFilterQuery::new()
-        .without_component(test_grid_id)
+    let second_query = DynamicQuery::new()
+        .component(test_vector_id)
+        .optional_component(test_grid_id)
         .build();
 
-    println!(
-        "Test vector id: {:?}, test grid id: {:?}",
-        test_vector_id, test_grid_id
-    );
-
-    let mut second_query_state = world.query_dynamic_filtered(&second_query, &filter_query);
+    let mut second_query_state = world.query_dynamic(&second_query);
     for items in second_query_state.iter_mut(&mut world) {
         unsafe {
-            match items.items.as_slice() {
-                [DynamicItem::Component {
-                    pointer: vector_pointer,
-                }, DynamicItem::Component {
-                    pointer: grid_pointer,
-                }] => {
+            match items.as_slice() {
+                [DynamicItem::Component(vector_reference), DynamicItem::Component(grid_reference)] =>
+                {
                     println!(
                         "{:?}, {:?}",
-                        *vector_pointer.cast::<TestComponent>().as_ptr(),
-                        *grid_pointer.cast::<GridSpace>().as_ptr()
+                        vector_reference.downcast_unchecked::<TestComponent>(),
+                        grid_reference.downcast_unchecked::<GridSpace>()
                     );
                 }
-                [DynamicItem::Component {
-                    pointer: vector_pointer,
-                }, DynamicItem::NoMatch] => {
+                [DynamicItem::Component(reference), DynamicItem::ComponentNotPresent] => {
                     println!(
                         "{:?}, NoMatch",
-                        *vector_pointer.cast::<TestComponent>().as_ptr()
+                        reference.downcast_unchecked::<TestComponent>()
                     );
-                }
-                [DynamicItem::Component {
-                    pointer: vector_pointer,
-                }, ..] => {
-                    println!("{:?}", *vector_pointer.cast::<TestComponent>().as_ptr());
                 }
                 _ => unreachable!(),
             }

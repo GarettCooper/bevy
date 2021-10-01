@@ -14,10 +14,18 @@ unsafe impl FetchState for DynamicFilterState {
 
     #[inline]
     fn update_component_access(&self, access: &mut FilteredAccess<ComponentId>) {
-        if self.without {
-            access.add_without(self.component_id)
-        } else {
-            access.add_with(self.component_id)
+        match self {
+            DynamicFilterState::WithOrWithout {
+                without,
+                component_id,
+            } => {
+                if *without {
+                    access.add_without(*component_id)
+                } else {
+                    access.add_with(*component_id)
+                }
+            }
+            DynamicFilterState::Or(set) => set.update_component_access(access),
         }
     }
 
@@ -31,12 +39,26 @@ unsafe impl FetchState for DynamicFilterState {
 
     #[inline]
     fn matches_archetype(&self, archetype: &Archetype) -> bool {
-        archetype.contains(self.component_id) ^ self.without
+        match self {
+            DynamicFilterState::WithOrWithout {
+                component_id,
+                without,
+            } => archetype.contains(*component_id) ^ *without,
+            DynamicFilterState::Or(set) => {
+                set.params.iter().any(|f| f.matches_archetype(archetype))
+            }
+        }
     }
 
     #[inline]
     fn matches_table(&self, table: &Table) -> bool {
-        table.has_column(self.component_id) ^ self.without
+        match self {
+            DynamicFilterState::WithOrWithout {
+                component_id,
+                without,
+            } => table.has_column(*component_id) ^ *without,
+            DynamicFilterState::Or(set) => set.params.iter().any(|f| f.matches_table(table)),
+        }
     }
 }
 
@@ -141,15 +163,29 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFilterFetch {
     unsafe fn init(
         world: &World,
         state: &Self::State,
-        _last_change_tick: u32,
-        _change_tick: u32,
+        last_change_tick: u32,
+        change_tick: u32,
     ) -> Self {
         Self {
-            storage_type: world
-                .components
-                .get_info(state.component_id)
-                .expect("Expected component to exist")
-                .storage_type(),
+            storage_type: match state {
+                DynamicFilterState::WithOrWithout { component_id, .. } => world
+                    .components
+                    .get_info(*component_id)
+                    .expect("Expected component to exist")
+                    .storage_type(),
+                DynamicFilterState::Or(set) => {
+                    if set
+                        .params
+                        .iter()
+                        .map(|s| Self::init(world, s, last_change_tick, change_tick))
+                        .all(|f| f.storage_type == StorageType::Table)
+                    {
+                        StorageType::Table
+                    } else {
+                        StorageType::SparseSet
+                    }
+                }
+            },
         }
     }
 
