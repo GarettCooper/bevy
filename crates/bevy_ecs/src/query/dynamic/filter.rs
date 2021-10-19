@@ -115,10 +115,7 @@ impl<'w, 's> Fetch<'w, 's> for DynamicSetFilterFetch {
         }
     }
 
-    #[inline]
-    fn is_dense(&self) -> bool {
-        self.params_fetch.iter().all(|p| p.is_dense())
-    }
+    const IS_DENSE: bool = false;
 
     #[inline]
     unsafe fn set_archetype(
@@ -189,10 +186,7 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFilterFetch {
         }
     }
 
-    #[inline]
-    fn is_dense(&self) -> bool {
-        self.storage_type == StorageType::Table
-    }
+    const IS_DENSE: bool = false;
 
     #[inline]
     unsafe fn set_archetype(

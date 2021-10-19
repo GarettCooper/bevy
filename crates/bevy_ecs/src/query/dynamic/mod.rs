@@ -253,20 +253,22 @@ pub enum DynamicItem<'a> {
 }
 
 pub struct DynamicComponentReference<'a> {
-    type_id: TypeId,
+    type_id: Option<TypeId>,
     pointer: NonNull<()>,
     phantom: PhantomData<&'a ()>,
 }
 
 impl<'a> DynamicComponentReference<'a> {
     pub fn downcast<T: 'static>(&self) -> Option<&'a T> {
-        if TypeId::of::<T>() != self.type_id {
-            None
-        } else {
-            // SAFE Type Ids match. Technically unsound, but Type ID collision isn't likely enough to worry about.
-            // We also have guaranteed mutable access
-            unsafe { Some(&*self.pointer.as_ptr().cast::<T>()) }
-        }
+        self.type_id.and_then(|type_id| {
+            if TypeId::of::<T>() != type_id {
+                None
+            } else {
+                // SAFE Type Ids match. Technically unsound, but Type ID collision isn't likely enough to worry about.
+                // We also have guaranteed mutable access
+                unsafe { Some(&*self.pointer.as_ptr().cast::<T>()) }
+            }
+        })
     }
 
     #[inline(always)]
@@ -280,26 +282,28 @@ impl<'a> DynamicComponentReference<'a> {
     }
 
     #[inline(always)]
-    pub fn component_type_id(&self) -> TypeId {
+    pub fn component_type_id(&self) -> Option<TypeId> {
         self.type_id
     }
 }
 
 pub struct DynamicMutComponentReference<'a> {
-    type_id: TypeId,
+    type_id: Option<TypeId>,
     pointer: NonNull<()>,
     phantom: PhantomData<&'a mut ()>,
 }
 
 impl<'a> DynamicMutComponentReference<'a> {
     pub fn downcast<T: 'static>(&mut self) -> Option<&'a mut T> {
-        if TypeId::of::<T>() != self.type_id {
-            None
-        } else {
-            // SAFE Type Ids match. Technically unsound, but Type ID collision isn't likely enough to worry about.
-            // We also have guaranteed mutable access
-            unsafe { Some(&mut *(self.pointer.as_ptr().cast::<T>())) }
-        }
+        self.type_id.and_then(|type_id| {
+            if TypeId::of::<T>() != type_id {
+                None
+            } else {
+                // SAFE Type Ids match. Technically unsound, but Type ID collision isn't likely enough to worry about.
+                // We also have guaranteed mutable access
+                unsafe { Some(&mut *(self.pointer.as_ptr().cast::<T>())) }
+            }
+        })
     }
 
     #[inline(always)]
@@ -313,7 +317,7 @@ impl<'a> DynamicMutComponentReference<'a> {
     }
 
     #[inline(always)]
-    pub fn component_type_id(&self) -> TypeId {
+    pub fn component_type_id(&self) -> Option<TypeId> {
         self.type_id
     }
 }
@@ -326,7 +330,7 @@ pub enum DynamicFetch {
         mutable: bool,
         optional: bool,
         matches: bool,
-        type_id: TypeId,
+        type_id: Option<TypeId>,
         component_id: ComponentId,
         component_layout: Layout,
         storage_type: StorageType,

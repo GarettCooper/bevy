@@ -38,9 +38,7 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
                     mutable: *mutable,
                     optional: *optional,
                     matches: false,
-                    type_id: component_info
-                        .type_id()
-                        .expect("Expected component to have Type ID"),
+                    type_id: component_info.type_id(),
                     component_id: *component_id,
                     component_layout: component_info.layout(),
                     storage_type: component_info.storage_type(),
@@ -60,21 +58,6 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
             DynamicParam::Entity => Self::Entity {
                 entities: std::ptr::null(),
             },
-        }
-    }
-
-    #[inline]
-    fn is_dense(&self) -> bool {
-        match self {
-            Self::Component {
-                storage_type: StorageType::Table,
-                ..
-            } => true,
-            Self::Component {
-                storage_type: StorageType::SparseSet,
-                ..
-            } => false,
-            Self::Entity { .. } => true,
         }
     }
 
@@ -250,6 +233,8 @@ impl<'w, 's> Fetch<'w, 's> for DynamicFetch {
             Self::Entity { entities } => DynamicItem::Entity(*(*entities).add(table_row)),
         }
     }
+
+    const IS_DENSE: bool = false;
 }
 
 unsafe impl FetchState for DynamicFetchState {
@@ -356,11 +341,6 @@ impl<'w, 's> Fetch<'w, 's> for DynamicSetFetch {
     }
 
     #[inline]
-    fn is_dense(&self) -> bool {
-        self.params_fetch.iter().all(|p| p.is_dense())
-    }
-
-    #[inline]
     unsafe fn set_archetype(
         &mut self,
         state: &Self::State,
@@ -402,6 +382,8 @@ impl<'w, 's> Fetch<'w, 's> for DynamicSetFetch {
                 .collect(),
         }
     }
+
+    const IS_DENSE: bool = false;
 }
 
 unsafe impl FetchState for DynamicSetFetchState {
